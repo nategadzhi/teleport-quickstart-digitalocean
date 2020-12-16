@@ -1,0 +1,11 @@
+.terraform
+*.tfstate*
+*.lock.hcl
+
+terraform.tfvars
+**/license.pem
+
+# Teleport license
+*.pem
+
+tmp

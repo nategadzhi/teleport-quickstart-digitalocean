@@ -1,0 +1,120 @@
+
+#cloud-config
+
+package_update: true
+package_upgrade: true
+package_reboot_if_required: true
+
+packages:
+  - apt-transport-https
+  - ca-certificates
+  - curl
+  - gnupg-agent
+  - software-properties-common
+  - unattended-upgrades
+
+write_files:
+
+- encoding: b64
+  content: ${teleport_license_pem}
+  owner: root:root
+  path: /var/lib/teleport/license.pem
+  permissions: '0644'
+- encoding: b64
+  path: /var/lib/teleport/webproxy_cert.pem
+  content: ${teleport_certificate_pem}
+  owner: root:root
+  permissions: '0644'
+- encoding: b64
+  path: /var/lib/teleport/webproxy_key.pem
+  content: ${teleport_certificate_key_pem}
+  owner: root:root
+  permissions: '0644'
+
+# Node config is the same as in node.yaml
+- path: /etc/teleport.yaml
+  content: |
+    teleport:
+        auth_token: "${teleport_cluster_token}"
+        auth_servers:
+          - "https://${teleport_public_addr}:3025"
+    auth_service:
+        enabled: false
+    proxy_service:
+        enabled: false
+    ssh_service:
+        enabled: true
+        labels:
+          env: demo
+          type: plugins
+          teleport: true
+
+# Jira Plugin Config
+- path: /etc/teleport-jira.toml
+  content: |
+    [teleport]
+    auth_server = "${teleport_public_addr}:3025"
+    client_key = "/var/lib/teleport/plugins/jira/plug.key"
+    client_crt = "/var/lib/teleport/plugins/jira/plug.crt"
+    root_cas = "/var/lib/teleport/plugins/jira/plug.cas"
+
+    [jira]
+    url = "https://teleport-demo.atlassian.net"
+    username = "nate+teleport-demo@evilmartians.com"
+    api_token = "liXLjAd22xjGsEYBgbU42BA2"
+    project = "TD2"
+
+    [http]
+    public_addr = "https://${plugins_public_addr}:8045"
+    listen_addr = ":8045"
+    https_key_file = "/var/lib/teleport/webproxy_key.pem"
+    https_cert_file = "/var/lib/teleport/webproxy_cert.pem"
+
+    [log]
+    output = "stderr" # Logger output. Could be "stdout", "stderr" or "/var/lib/teleport/jira.log"
+    severity = "INFO" # Logger severity. Could be "INFO", "ERROR", "DEBUG" or "WARN".
+
+- path: /etc/systemd/system/teleport.service
+  content: |
+    [Unit]
+    Description=Teleport
+    After=network.target
+
+    [Service]
+    Type=simple
+    Restart=on-failure
+    ExecStart=/usr/local/bin/teleport start --config=/etc/teleport.yaml
+    ExecReload=/bin/kill -HUP $MAINPID
+    PIDFile=/run/teleport.pid
+
+    [Install]
+    WantedBy=multi-user.target
+
+# Jira Plugin Service
+- path: /etc/systemd/system/teleport-jira.service
+  content: |
+    [Unit]
+    Description=Teleport Jira Plugin
+    After=network.target
+
+    [Service]
+    Type=simple
+    Restart=on-failure
+    ExecStart=/usr/local/bin/teleport-jira start --config=/etc/teleport-jira.toml
+    ExecReload=/bin/kill -HUP $MAINPID
+    PIDFile=/run/teleport-jira.pid
+
+    [Install]
+    WantedBy=multi-user.target
+
+runcmd:
+  - 'mkdir -p ~/teleport-dist && cd ~/teleport-dist && curl -L https://get.gravitational.com/teleport-ent-${teleport_version}-linux-amd64-bin.tar.gz | tar -xz && ./teleport-ent/install'
+  - 'systemctl enable teleport.service'
+  - 'systemctl start teleport.service'
+  - 'systemctl enable teleport-jira.service'
+  - 'systemctl start teleport-jira.service'
+
+  # TODO: either create all plugin dirs, or
+  # refactor this
+  # jira plugin config.
+  - 'mkdir -p /var/lib/teleport/plugins/jira'

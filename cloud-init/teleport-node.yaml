@@ -1,0 +1,58 @@
+#cloud-config
+
+package_update: true
+package_upgrade: true
+package_reboot_if_required: true
+
+packages:
+  - apt-transport-https
+  - ca-certificates
+  - curl
+  - gnupg-agent
+  - software-properties-common
+  - unattended-upgrades
+
+write_files:
+- encoding: b64
+  content: ${teleport_license_pem}
+  owner: root:root
+  path: /var/lib/teleport/license.pem
+  permissions: '0644'
+
+- path: /etc/teleport.yaml
+  content: |
+    teleport:
+        auth_token: "${teleport_cluster_token}"
+        auth_servers:
+          - "https://${teleport_public_addr}:3025"
+    auth_service:
+        enabled: false
+    proxy_service:
+        enabled: false
+    ssh_service:
+        enabled: true
+        labels:
+          env: demo
+          type: app
+          teleport: false
+
+- path: /etc/systemd/system/teleport.service
+  content: |
+    [Unit]
+    Description=Teleport
+    After=network.target
+
+    [Service]
+    Type=simple
+    Restart=on-failure
+    ExecStart=/usr/local/bin/teleport start --config=/etc/teleport.yaml
+    ExecReload=/bin/kill -HUP $MAINPID
+    PIDFile=/run/teleport.pid
+
+    [Install]
+    WantedBy=multi-user.target
+
+runcmd:
+  - 'mkdir -p ~/teleport-dist && cd ~/teleport-dist && curl -L https://get.gravitational.com/teleport-ent-${teleport_version}-linux-amd64-bin.tar.gz | tar -xz && ./teleport-ent/install'
+  - 'systemctl enable teleport.service'
+  - 'systemctl start teleport.service'

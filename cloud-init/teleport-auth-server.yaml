@@ -1,0 +1,109 @@
+
+#cloud-config
+
+package_update: true
+package_upgrade: true
+package_reboot_if_required: true
+
+packages:
+  - apt-transport-https
+  - ca-certificates
+  - curl
+  - gnupg-agent
+  - software-properties-common
+  - unattended-upgrades
+
+write_files:
+
+- encoding: b64
+  content: ${teleport_license_pem}
+  owner: root:root
+  path: /var/lib/teleport/license.pem
+  permissions: '0644'
+- encoding: b64
+  path: /var/lib/teleport/webproxy_cert.pem
+  content: ${teleport_certificate_pem}
+  owner: root:root
+  permissions: '0644'
+- encoding: b64
+  path: /var/lib/teleport/webproxy_key.pem
+  content: ${teleport_certificate_key_pem}
+  owner: root:root
+  permissions: '0644'
+
+- path: /etc/systemd/system/teleport.service
+  content: |
+    [Unit]
+    Description=Teleport
+    After=network.target
+
+    [Service]
+    Type=simple
+    Restart=on-failure
+    ExecStart=/usr/local/bin/teleport start --config=/etc/teleport.yaml
+    ExecReload=/bin/kill -HUP $MAINPID
+    PIDFile=/run/teleport.pid
+
+    [Install]
+    WantedBy=multi-user.target
+
+- path: /etc/teleport.yaml
+  content: |
+    teleport:
+      data_dir: /var/lib/teleport
+    auth_service:
+      enabled: true
+      license_file: /var/lib/teleport/license.pem
+      cluster_name: "${teleport_cluster_name}"
+      listen_addr: "0.0.0.0:3025"
+      public_addr: "${teleport_public_addr}:3025"
+      tokens:
+      - proxy,node,app:${teleport_cluster_token}
+    ssh_service:
+      enabled: true
+      labels:
+        type: auth
+        env: demo
+        teleport: true
+    app_service:
+      enabled: true
+      debug_app: true
+    proxy_service:
+      enabled: true
+      listen_addr: "0.0.0.0:3023"
+      web_listen_addr: "0.0.0.0:3080"
+      tunnel_listen_addr: "0.0.0.0:3024"
+      public_addr: "${teleport_public_addr}:3080"
+      https_keypairs:
+      - key_file: /var/lib/teleport/webproxy_key.pem
+        cert_file: /var/lib/teleport/webproxy_cert.pem
+
+- path: /var/lib/teleport/demo-resources/resources.yaml
+  content: |
+    kind: user
+    metadata:
+      name: access-plugin
+    spec:
+      roles: ["access-plugin"]
+    version: v2
+
+    ---
+    kind: role
+    metadata:
+      name: access-plugin
+    spec:
+      allow:
+        rules:
+          - resources: ["access_request"]
+            verbs: ["list", "read", "update"]
+        # teleport currently refuses to issue certs for a user with 0 logins,
+        # this restriction may be lifted in future versions.
+        logins: ["access-plugin"]
+    version: v3
+
+
+runcmd:
+  # Install Teleport
+  - 'mkdir -p ~/teleport-dist && cd ~/teleport-dist && curl -L https://get.gravitational.com/teleport-ent-${teleport_version}-linux-amd64-bin.tar.gz | tar -xz && ./teleport-ent/install'
+  - 'systemctl enable teleport.service'
+  - 'systemctl start teleport.service'
